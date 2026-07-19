@@ -1,0 +1,63 @@
+name: build-release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Test core
+        run: |
+          cd packages/homeshare_core && dart pub get && dart test
+          cd ../../packages/homeshare_p2p && dart pub get && dart test
+      - name: Build hub
+        run: |
+          cd apps/homeshare_server
+          dart pub get
+          dart compile exe bin/homeshare_server.dart -o homeshare-hub
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homeshare-hub-linux
+          path: apps/homeshare_server/homeshare-hub
+
+  windows:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: |
+          cd apps/homeshare
+          flutter pub get
+          flutter build windows --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homeshare-windows
+          path: apps/homeshare/build/windows/x64/runner/Release
+
+  android:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: |
+          cd apps/homeshare
+          flutter pub get
+          flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homeshare-apk
+          path: apps/homeshare/build/app/outputs/flutter-apk/app-release.apk

@@ -1,0 +1,28 @@
+name: HomeShare
+repository: https://github.com/homeshare/homeshare
+
+packages:
+  - packages/**
+  - apps/**
+
+command:
+  bootstrap:
+    runPubGetInParallel: true
+  analyze:
+    concurrency: 4
+  test:
+    concurrency: 2
+
+scripts:
+  analyze:
+    run: dart analyze --fatal-infos
+    exec:
+      concurrency: 4
+  test:
+    run: dart test
+    exec:
+      concurrency: 2
+  build:hub:
+    run: dart compile exe bin/homeshare_server.dart -o build/homeshare-hub
+    packageFilters:
+      scope: homeshare_server

@@ -1,0 +1,9 @@
+{
+  "display_name": "HomeShare-Linux",
+  "inbox_dir": "/var/homeshare/inbox",
+  "web_port": 8787,
+  "p2p_port": 45838,
+  "discovery_port": 45837,
+  "data_dir": "/var/lib/homeshare",
+  "preferred_lan_host": "192.168.88.10"
+}

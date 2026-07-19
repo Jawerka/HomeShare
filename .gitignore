@@ -1,0 +1,79 @@
+# --- Dart / Flutter / Melos ---
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+.idea/
+.vscode/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/doc/api/
+**/ios/Flutter/.last_build_id
+**/windows/flutter/ephemeral/
+**/linux/flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+
+# Melos local overrides + FVM cache (keep .fvmrc committed)
+pubspec_overrides.yaml
+.fvm/
+
+# --- Android ---
+**/android/.gradle/
+**/android/.kotlin/
+**/android/local.properties
+**/android/key.properties
+**/android/**/captures/
+**/android/**/.cxx/
+**/*.jks
+**/*.keystore
+
+# --- Native (Windows shell extension) ---
+native/windows_shell/x64/
+native/windows_shell/Debug/
+native/windows_shell/Release/
+native/windows_shell/*.obj
+native/windows_shell/*.pdb
+native/windows_shell/*.ilk
+native/windows_shell/*.exp
+native/windows_shell/*.lib
+native/windows_shell/*.dll
+native/windows_shell/*.exe
+
+# --- Build / release outputs ---
+dist/
+*.log
+*.apk
+*.aab
+*.ipa
+*.msix
+*.appx
+
+# --- Secrets / env ---
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+secrets/
+
+# --- OS / IDE ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+*~
+*.swp
+*.swo
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- Misc ---
+*.tmp
+*.bak
+*.orig
+.history/
+migrate_working_dir/

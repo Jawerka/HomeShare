@@ -1,0 +1,38 @@
+name: homeshare
+description: HomeShare — LAN file sharing for Windows and Android.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  file_picker: ^8.1.7
+  flutter_local_notifications: ^18.0.1
+  http: ^1.2.2
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  receive_sharing_intent: ^1.8.1
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  tray_manager: ^0.2.4
+  window_manager: ^0.4.3
+  homeshare_core:
+    path: ../../packages/homeshare_core
+  homeshare_p2p:
+    path: ../../packages/homeshare_p2p
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/tray_icon.ico
+    - assets/tray_icon.png
+    - assets/icon/homeshare_icon.svg
