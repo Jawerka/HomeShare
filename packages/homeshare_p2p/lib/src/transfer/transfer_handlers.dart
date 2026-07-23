@@ -1,10 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:homeshare_core/homeshare_core.dart';
 import 'package:shelf/shelf.dart';
 
-import '../auth/auth_headers.dart';
 import '../protocol/constants.dart';
 import '../protocol/http_helpers.dart';
 import 'transfer_session.dart';
