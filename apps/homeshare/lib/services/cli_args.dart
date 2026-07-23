@@ -49,10 +49,14 @@ class CliArgs {
   static List<String> expandPathArg(String arg) {
     final trimmed = arg.trim();
     if (trimmed.isEmpty) return const [];
-    final asFile = File(trimmed);
-    final asDir = Directory(trimmed);
-    if (asFile.existsSync() || asDir.existsSync()) {
-      return [trimmed];
+    try {
+      final asFile = File(trimmed);
+      final asDir = Directory(trimmed);
+      if (asFile.existsSync() || asDir.existsSync()) {
+        return [trimmed];
+      }
+    } on FileSystemException {
+      // Invalid path characters (e.g. multi-quoted argv) — parse quotes below.
     }
     if (!trimmed.contains('"')) {
       return [trimmed];
@@ -74,7 +78,3 @@ class CliArgs {
         'paths': sendPaths,
       });
 }
-
-bool get isDesktop =>
-    !bool.fromEnvironment('dart.library.js_util') &&
-    (Platform.isWindows || Platform.isLinux || Platform.isMacOS);

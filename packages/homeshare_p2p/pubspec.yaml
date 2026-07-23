@@ -1,6 +1,6 @@
 name: homeshare_p2p
 description: LAN discovery, pairing and file transfer transport for HomeShare.
-version: 0.1.0
+version: 0.1.1
 publish_to: none
 
 environment:

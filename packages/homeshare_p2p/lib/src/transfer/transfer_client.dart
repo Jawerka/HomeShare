@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../auth/auth_headers.dart';
 import '../protocol/constants.dart';
 import '../protocol/errors.dart';
+import '../protocol/http_helpers.dart';
 import 'bandwidth_governor.dart';
 
 typedef ProgressCallback = void Function(int transferred, int total);
@@ -44,41 +45,28 @@ class TransferClient {
       throw HomeShareException.transport('peer host unknown');
     }
     final size = await file.length();
-    // Prefer streaming hash during upload; pre-hash only if caller supplied one.
     final knownHash = sha256;
     final base = _base(peer);
 
-    final offerRes = await _postJson(
-      peer,
-      '$base${HomeShareProtocol.pathPrefix}/transfer/offer',
-      {
-        'transfer_id': transferId,
-        'name': file.uri.pathSegments.last,
-        'kind': 'file',
-        'size': size,
-        if (knownHash != null) 'sha256': knownHash,
-        'file_count': 1,
-      },
+    final offerBody = throwIfOfferFailed(
+      await _postJson(
+        peer,
+        '$base${HomeShareProtocol.pathPrefix}/transfer/offer',
+        {
+          'transfer_id': transferId,
+          'name': file.uri.pathSegments.last,
+          'kind': 'file',
+          'size': size,
+          if (knownHash != null) 'sha256': knownHash,
+          'file_count': 1,
+        },
+      ),
     );
-    if (offerRes.statusCode == 507) {
-      throw HomeShareException.diskFull(offerRes.body);
-    }
-    if (offerRes.statusCode == 401 || offerRes.statusCode == 403) {
-      throw HomeShareException.authRequired(offerRes.body);
-    }
-    if (offerRes.statusCode != 200) {
-      throw HomeShareException(
-        'offer_failed',
-        offerRes.body,
-        statusCode: offerRes.statusCode,
-      );
-    }
-    final offerBody = jsonDecode(offerRes.body) as Map<String, dynamic>;
     var offset = (offerBody['resume_offset'] as num?)?.toInt() ?? 0;
 
     final hasher = knownHash == null ? Sha256Stream() : null;
     if (hasher != null && offset > 0) {
-      // Resume: must re-hash prefix so finalize digest matches full file.
+      // Resume: re-hash prefix so finalize digest matches the full file.
       final rafHash = await file.open();
       try {
         var left = offset;
@@ -97,7 +85,6 @@ class TransferClient {
     final raf = await file.open();
     try {
       await raf.setPosition(offset);
-      // Sequential PUTs (protocol forbids gaps); speed via chunk size + pacing.
       while (offset < size) {
         final toRead = (size - offset).clamp(0, governor.chunkSize);
         final chunk = await raf.read(toRead);
@@ -108,7 +95,7 @@ class TransferClient {
           peer: peer,
           base: base,
           transferId: transferId,
-          relativePath: 'payload',
+          relativePath: HomeShareProtocol.blobRelativePath,
           offset: offset,
           total: size,
           chunk: chunk,
@@ -124,6 +111,110 @@ class TransferClient {
     }
 
     final hash = knownHash ?? hasher!.finalize();
+    await _finalize(
+      peer: peer,
+      base: base,
+      transferId: transferId,
+      body: {'sha256': hash},
+    );
+  }
+
+  Future<void> sendDirectory({
+    required TrustedPeer peer,
+    required String transferId,
+    required Directory directory,
+    ProgressCallback? onProgress,
+  }) async {
+    if (peer.host == null) {
+      throw HomeShareException.transport('peer host unknown');
+    }
+    final files = <File>[];
+    await for (final entity
+        in directory.list(recursive: true, followLinks: false)) {
+      if (entity is File) files.add(entity);
+    }
+    final manifest = <Map<String, Object?>>[];
+    var total = 0;
+    for (final f in files) {
+      final rel = f.path
+          .substring(directory.path.length)
+          .replaceAll('\\', '/')
+          .replaceFirst(RegExp(r'^/'), '');
+      final size = await f.length();
+      final hash = await Sha256Stream.hashFile(f);
+      total += size;
+      manifest.add({'path': rel, 'size': size, 'sha256': hash});
+    }
+
+    final base = _base(peer);
+    throwIfOfferFailed(
+      await _postJson(
+        peer,
+        '$base${HomeShareProtocol.pathPrefix}/transfer/offer',
+        {
+          'transfer_id': transferId,
+          'name': directory.uri.pathSegments.where((s) => s.isNotEmpty).last,
+          'kind': 'dir',
+          'size': total,
+          'file_count': files.length,
+          'manifest': manifest,
+        },
+      ),
+    );
+
+    var sent = 0;
+    for (final entry in manifest) {
+      final rel = entry['path']! as String;
+      final size = entry['size']! as int;
+      final hash = entry['sha256']! as String;
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${rel.replaceAll('/', Platform.pathSeparator)}',
+      );
+      var offset = 0;
+      final raf = await file.open();
+      try {
+        while (offset < size) {
+          final toRead = (size - offset).clamp(0, governor.chunkSize);
+          final chunk = await raf.read(toRead);
+          if (chunk.isEmpty) break;
+          final watch = Stopwatch()..start();
+          await _putChunk(
+            peer: peer,
+            base: base,
+            transferId: transferId,
+            relativePath: rel,
+            offset: offset,
+            total: size,
+            chunk: chunk,
+            fileSha256: hash,
+          );
+          watch.stop();
+          governor.observePut(bytes: chunk.length, elapsed: watch.elapsed);
+          await governor.pace(bytesJustSent: chunk.length, putWatch: watch);
+          offset += chunk.length;
+          sent += chunk.length;
+          onProgress?.call(sent, total);
+        }
+      } finally {
+        await raf.close();
+      }
+    }
+
+    await _finalize(
+      peer: peer,
+      base: base,
+      transferId: transferId,
+      body: {'kind': 'dir'},
+    );
+  }
+
+  Future<void> _finalize({
+    required TrustedPeer peer,
+    required String base,
+    required String transferId,
+    required Map<String, Object?> body,
+  }) async {
     final finUri = Uri.parse(
       '$base${HomeShareProtocol.pathPrefix}/transfer/$transferId/finalize',
     );
@@ -138,7 +229,7 @@ class TransferClient {
             ),
             'content-type': 'application/json',
           },
-          body: jsonEncode({'sha256': hash}),
+          body: jsonEncode(body),
         )
         .timeout(requestTimeout);
     if (finRes.statusCode != 200) {
@@ -186,122 +277,6 @@ class TransferClient {
         'upload_failed',
         putRes.body,
         statusCode: putRes.statusCode,
-      );
-    }
-  }
-
-  Future<void> sendDirectory({
-    required TrustedPeer peer,
-    required String transferId,
-    required Directory directory,
-    ProgressCallback? onProgress,
-  }) async {
-    if (peer.host == null) {
-      throw HomeShareException.transport('peer host unknown');
-    }
-    final files = <File>[];
-    await for (final entity
-        in directory.list(recursive: true, followLinks: false)) {
-      if (entity is File) files.add(entity);
-    }
-    final manifest = <Map<String, Object?>>[];
-    var total = 0;
-    for (final f in files) {
-      final rel = f.path
-          .substring(directory.path.length)
-          .replaceAll('\\', '/')
-          .replaceFirst(RegExp(r'^/'), '');
-      final size = await f.length();
-      final hash = await Sha256Stream.hashFile(f);
-      total += size;
-      manifest.add({'path': rel, 'size': size, 'sha256': hash});
-    }
-
-    final base = _base(peer);
-    final offerRes = await _postJson(
-      peer,
-      '$base${HomeShareProtocol.pathPrefix}/transfer/offer',
-      {
-        'transfer_id': transferId,
-        'name': directory.uri.pathSegments
-            .where((s) => s.isNotEmpty)
-            .last,
-        'kind': 'dir',
-        'size': total,
-        'file_count': files.length,
-        'manifest': manifest,
-      },
-    );
-    if (offerRes.statusCode == 507) {
-      throw HomeShareException.diskFull(offerRes.body);
-    }
-    if (offerRes.statusCode != 200) {
-      throw HomeShareException(
-        'offer_failed',
-        offerRes.body,
-        statusCode: offerRes.statusCode,
-      );
-    }
-
-    var sent = 0;
-    for (final entry in manifest) {
-      final rel = entry['path']! as String;
-      final size = entry['size']! as int;
-      final hash = entry['sha256']! as String;
-      final file = File('${directory.path}${Platform.pathSeparator}'
-          '${rel.replaceAll('/', Platform.pathSeparator)}');
-      var offset = 0;
-      final raf = await file.open();
-      try {
-        while (offset < size) {
-          final toRead = (size - offset).clamp(0, governor.chunkSize);
-          final chunk = await raf.read(toRead);
-          if (chunk.isEmpty) break;
-          final watch = Stopwatch()..start();
-          await _putChunk(
-            peer: peer,
-            base: base,
-            transferId: transferId,
-            relativePath: rel,
-            offset: offset,
-            total: size,
-            chunk: chunk,
-            fileSha256: hash,
-          );
-          watch.stop();
-          governor.observePut(bytes: chunk.length, elapsed: watch.elapsed);
-          await governor.pace(bytesJustSent: chunk.length, putWatch: watch);
-          offset += chunk.length;
-          sent += chunk.length;
-          onProgress?.call(sent, total);
-        }
-      } finally {
-        await raf.close();
-      }
-    }
-
-    final finUri = Uri.parse(
-      '$base${HomeShareProtocol.pathPrefix}/transfer/$transferId/finalize',
-    );
-    final finRes = await _http
-        .post(
-          finUri,
-          headers: {
-            ..._auth.forRequest(
-              peerId: peer.peerId.value,
-              method: 'POST',
-              path: finUri.path,
-            ),
-            'content-type': 'application/json',
-          },
-          body: jsonEncode({'kind': 'dir'}),
-        )
-        .timeout(requestTimeout);
-    if (finRes.statusCode != 200) {
-      throw HomeShareException(
-        'finalize_failed',
-        finRes.body,
-        statusCode: finRes.statusCode,
       );
     }
   }

@@ -81,6 +81,38 @@ void main() {
     expect(report.hasRoomFor(90 * 1024 * 1024), isFalse);
   });
 
+  test('DiskSpaceReport unknown fails closed', () {
+    final report = DiskSpaceReport.unknown('/inbox');
+    expect(report.probeOk, isFalse);
+    expect(report.hasRoomFor(1), isFalse);
+  });
+
+  test('InboxWriter rejects concurrent openWrite', () async {
+    final inbox = Directory('${tmp.path}/concurrent');
+    final writer = InboxWriter(inboxDir: inbox);
+    const id = 'c1';
+    final s1 = await writer.openWrite(
+      transferId: id,
+      relativePath: 'payload',
+      offset: 0,
+    );
+    expect(
+      () => writer.openWrite(
+        transferId: id,
+        relativePath: 'payload',
+        offset: 0,
+      ),
+      throwsA(isA<BlobWriteConflictException>()),
+    );
+    await s1.close();
+    final s2 = await writer.openWrite(
+      transferId: id,
+      relativePath: 'payload',
+      offset: 0,
+    );
+    await s2.close();
+  });
+
   test('uniqueFile adds suffix', () async {
     final dir = Directory('${tmp.path}/u')..createSync();
     await File('${dir.path}/a.txt').writeAsString('1');
@@ -160,5 +192,109 @@ void main() {
     );
     expect(job.isTerminal, isTrue);
     expect(job.progressPercent, 100);
+  });
+
+  test('Outbox reloads transferring as pending', () async {
+    final q1 = await OutboxQueue.open(tmp);
+    await q1.enqueue(
+      id: 'reload1',
+      peerId: const PeerId('p'),
+      direction: TransferDirection.send,
+      kind: TransferKind.file,
+      name: 'a.txt',
+      totalBytes: 10,
+      localPath: '/tmp/a.txt',
+    );
+    await q1.update('reload1', state: TransferState.transferring);
+    await q1.close();
+
+    final q2 = await OutboxQueue.open(tmp);
+    expect(q2.get('reload1')!.state, TransferState.pending);
+    await q2.close();
+  });
+
+  test('Outbox skips corrupt JSON', () async {
+    final outboxDir = Directory('${tmp.path}/outbox')..createSync(recursive: true);
+    await File('${outboxDir.path}/bad.json').writeAsString('{not json');
+    final q = await OutboxQueue.open(tmp);
+    expect(q.list(), isEmpty);
+    await q.close();
+  });
+
+  test('InboxWriter resume append and sha mismatch', () async {
+    final inbox = Directory('${tmp.path}/inbox2');
+    final writer = InboxWriter(inboxDir: inbox);
+    const id = 'resume1';
+    final part1 = List<int>.generate(50, (i) => i);
+    final part2 = List<int>.generate(50, (i) => i + 50);
+    final full = [...part1, ...part2];
+    final hash = Sha256Stream.hashBytes(full);
+
+    await writer.writeChunk(
+      transferId: id,
+      relativePath: 'payload',
+      offset: 0,
+      bytes: part1,
+    );
+    expect(await writer.receivedBytes(id), 50);
+
+    await writer.writeChunk(
+      transferId: id,
+      relativePath: 'payload',
+      offset: 50,
+      bytes: part2,
+    );
+    expect(await writer.receivedBytes(id), 100);
+
+    await expectLater(
+      writer.finalizeToInbox(
+        transferId: id,
+        desiredName: 'bad.bin',
+        expectedSha256: '0' * 64,
+      ),
+      throwsA(isA<Sha256MismatchException>()),
+    );
+
+    await writer.writeChunk(
+      transferId: 'resume2',
+      relativePath: 'payload',
+      offset: 0,
+      bytes: full,
+    );
+    final dest = await writer.finalizeToInbox(
+      transferId: 'resume2',
+      desiredName: 'ok.bin',
+      expectedSha256: hash,
+    );
+    expect(await dest.exists(), isTrue);
+    expect(await dest.length(), 100);
+  });
+
+  test('TokenStore persists across open', () async {
+    final data = Directory('${tmp.path}/tok');
+    final s1 = await TokenStore.open(data);
+    await s1.put('peer-a', 'secret-token');
+    final s2 = await TokenStore.open(data);
+    expect(s2.get('peer-a'), 'secret-token');
+    await s2.remove('peer-a');
+    expect(s2.get('peer-a'), isNull);
+  });
+
+  test('Outbox cancel and retry', () async {
+    final q = await OutboxQueue.open(tmp);
+    await q.enqueue(
+      id: 'c1',
+      peerId: const PeerId('p'),
+      direction: TransferDirection.send,
+      kind: TransferKind.file,
+      name: 'a.txt',
+      totalBytes: 10,
+    );
+    await q.markCancelled('c1');
+    expect(q.get('c1')!.state, TransferState.cancelled);
+    await q.retry('c1');
+    expect(q.get('c1')!.state, TransferState.pending);
+    expect(q.get('c1')!.retryCount, 1);
+    await q.close();
   });
 }

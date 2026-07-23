@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/painting.dart';
+import 'package:homeshare_core/homeshare_core.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
@@ -33,7 +34,8 @@ class WindowStateStore {
         return null;
       }
       return Rect.fromLTWH(left, top, width, height);
-    } catch (_) {
+    } catch (e, st) {
+      HsLog.app.warning('WindowStateStore.loadBounds failed', e, st);
       return null;
     }
   }
@@ -45,7 +47,8 @@ class WindowStateStore {
       final map =
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       return map['maximized'] == true;
-    } catch (_) {
+    } catch (e, st) {
+      HsLog.app.warning('WindowStateStore.loadMaximized failed', e, st);
       return false;
     }
   }
@@ -98,7 +101,9 @@ class WindowStateSaver {
           bounds: bounds,
           maximized: maximized,
         );
-      } catch (_) {}
+      } catch (e, st) {
+        HsLog.app.warning('WindowStateSaver scheduleSave failed', e, st);
+      }
     });
   }
 

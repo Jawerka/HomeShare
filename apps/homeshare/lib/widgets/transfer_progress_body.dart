@@ -74,12 +74,8 @@ class TransferProgressBody extends StatelessWidget {
                     job.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
                   ),
-                  subtitle: Text(
-                    _subtitleFor(job),
-                    textAlign: TextAlign.center,
-                  ),
+                  subtitle: Text(_subtitleFor(job)),
                 );
               },
             ),

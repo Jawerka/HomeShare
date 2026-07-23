@@ -1,5 +1,5 @@
 name: HomeShare
-repository: https://github.com/homeshare/homeshare
+repository: https://github.com/Jawerka/HomeShare
 
 packages:
   - packages/**
@@ -10,18 +10,38 @@ command:
     runPubGetInParallel: true
   analyze:
     concurrency: 4
-  test:
-    concurrency: 2
 
 scripts:
   analyze:
     run: dart analyze --fatal-infos
     exec:
       concurrency: 4
-  test:
+  test:dart:
+    description: Run dart tests for non-Flutter packages
     run: dart test
     exec:
       concurrency: 2
+      packageFilters:
+        dirExists: test
+        ignore:
+          - homeshare
+  test:flutter:
+    description: Run flutter tests for the Flutter app
+    run: flutter test
+    exec:
+      concurrency: 1
+      packageFilters:
+        scope: homeshare
+  test:
+    description: Run dart + flutter tests
+    run: melos run test:dart && melos run test:flutter
+  deps:audit:
+    description: Report outdated pub dependencies (run quarterly)
+    run: dart pub outdated
+    exec:
+      concurrency: 1
+      packageFilters:
+        dirExists: pubspec.yaml
   build:hub:
     run: dart compile exe bin/homeshare_server.dart -o build/homeshare-hub
     packageFilters:

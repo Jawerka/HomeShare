@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:homeshare_core/homeshare_core.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -14,10 +15,13 @@ import 'services/app_controller.dart';
 import 'services/cli_args.dart';
 import 'services/instance_gate.dart';
 import 'services/share_intent_service.dart';
+import 'services/window_shell.dart';
 import 'services/window_state_store.dart';
+import 'theme/home_share_theme.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  HsLog.setup(level: kDebugMode ? Level.ALL : Level.INFO);
 
   final parsed = CliArgs.parse(args);
 
@@ -46,20 +50,11 @@ Future<void> main(List<String> args) async {
         parsed.sendPaths.isNotEmpty && parsed.targetPeerId == null;
     final shouldShow = parsed.show || needsPicker;
     await windowManager.waitUntilReadyToShow(options, () async {
-      try {
-        await windowManager.setBounds(bounds);
-        if (maximized) await windowManager.maximize();
-      } catch (_) {}
+      await WindowShell.applyBounds(bounds, maximized: maximized);
       if (shouldShow) {
-        try {
-          await windowManager.setSkipTaskbar(false);
-          await windowManager.show();
-          await windowManager.focus();
-        } catch (_) {}
+        await WindowShell.showAndFocus();
       } else {
-        try {
-          await windowManager.hide();
-        } catch (_) {}
+        await WindowShell.hideToTray();
       }
     });
   }
@@ -67,17 +62,13 @@ Future<void> main(List<String> args) async {
   final controller = AppController();
   controller.onRequestShowWindow = () async {
     if (kIsWeb || !Platform.isWindows) return;
-    try {
-      await windowManager.setSkipTaskbar(false);
-      await windowManager.show();
-      await windowManager.focus();
-    } catch (_) {}
+    await WindowShell.showAndFocus();
   };
 
   try {
     await controller.init();
   } catch (e, st) {
-    debugPrint('HomeShare init failed: $e\n$st');
+    HsLog.app.severe('HomeShare init failed', e, st);
     // Still show UI with error if possible.
   }
 
@@ -91,11 +82,7 @@ Future<void> main(List<String> args) async {
     // Debounced merge so Explorer multi-select handoffs arrive before picker.
     controller.queuePendingSendPaths(parsed.sendPaths);
     if (!kIsWeb && Platform.isWindows) {
-      try {
-        await windowManager.setSkipTaskbar(false);
-        await windowManager.show();
-        await windowManager.focus();
-      } catch (_) {}
+      await WindowShell.showAndFocus();
     }
   }
 
@@ -188,7 +175,7 @@ class _HomeShareAppState extends State<HomeShareApp>
       );
       _trayReady = true;
     } catch (e, st) {
-      debugPrint('HomeShare tray init failed: $e\n$st');
+      HsLog.app.warning('HomeShare tray init failed', e, st);
     }
   }
 
@@ -228,8 +215,8 @@ class _HomeShareAppState extends State<HomeShareApp>
       } else {
         await trayManager.setToolTip('HomeShare');
       }
-    } catch (e) {
-      debugPrint('HomeShare tray progress update failed: $e');
+    } catch (e, st) {
+      HsLog.app.warning('HomeShare tray progress update failed', e, st);
     }
   }
 
@@ -268,18 +255,13 @@ class _HomeShareAppState extends State<HomeShareApp>
   void onWindowClose() async {
     try {
       _windowSaver.scheduleSave();
-      await windowManager.setSkipTaskbar(true);
-      await windowManager.hide();
-    } catch (_) {}
+      await WindowShell.hideToTray();
+    } catch (e, st) {
+      HsLog.app.warning('onWindowClose failed', e, st);
+    }
   }
 
-  Future<void> _showMainWindow() async {
-    try {
-      await windowManager.setSkipTaskbar(false);
-      await windowManager.show();
-      await windowManager.focus();
-    } catch (_) {}
-  }
+  Future<void> _showMainWindow() => WindowShell.showAndFocus();
 
   @override
   void onTrayIconMouseDown() {
@@ -290,7 +272,9 @@ class _HomeShareAppState extends State<HomeShareApp>
   void onTrayIconRightMouseDown() {
     try {
       trayManager.popUpContextMenu();
-    } catch (_) {}
+    } catch (e, st) {
+      HsLog.app.warning('Tray context menu failed', e, st);
+    }
   }
 
   @override
@@ -308,20 +292,8 @@ class _HomeShareAppState extends State<HomeShareApp>
     return MaterialApp(
       title: 'HomeShare',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2563EB),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2563EB),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: HomeShareTheme.light(),
+      darkTheme: HomeShareTheme.dark(),
       home: _sharePaths.isNotEmpty
           ? PeerPickerScreen(
               controller: widget.controller,
@@ -373,6 +345,7 @@ class _HomeShellState extends State<HomeShell> {
     ];
     final pct = widget.controller.activeProgressPercent;
     final errors = widget.controller.recentErrors;
+    final activeCount = widget.controller.activeTransferCount;
     return Scaffold(
       appBar: AppBar(
         title: Text(pct != null ? 'HomeShare · $pct%' : 'HomeShare'),
@@ -384,8 +357,8 @@ class _HomeShellState extends State<HomeShell> {
               content: Text(errors.first),
               actions: [
                 TextButton(
-                  onPressed: () => setState(() {}),
-                  child: const Text('OK'),
+                  onPressed: () => widget.controller.clearRecentErrors(),
+                  child: const Text('Скрыть'),
                 ),
               ],
             ),
@@ -395,16 +368,21 @@ class _HomeShellState extends State<HomeShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.devices),
             label: 'Устройства',
           ),
           NavigationDestination(
-            icon: Icon(Icons.swap_vert),
+            icon: activeCount > 0
+                ? Badge(
+                    label: Text('$activeCount'),
+                    child: const Icon(Icons.swap_vert),
+                  )
+                : const Icon(Icons.swap_vert),
             label: 'Передачи',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.settings),
             label: 'Настройки',
           ),

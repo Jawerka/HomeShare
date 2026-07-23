@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../logging/hs_log.dart';
 import '../models/file_entry.dart';
 import '../models/peer.dart';
 import '../models/transfer_job.dart';
@@ -43,8 +44,8 @@ class OutboxQueue {
           job.state = TransferState.pending;
         }
         _jobs[job.id] = job;
-      } catch (_) {
-        // skip corrupt
+      } catch (e, st) {
+        HsLog.core.warning('Skipping corrupt outbox file ${entity.path}', e, st);
       }
     }
     _emit();
@@ -135,6 +136,23 @@ class OutboxQueue {
       id,
       state: TransferState.failed,
       errorMessage: 'auth_required',
+    );
+  }
+
+  Future<void> markCancelled(String id) async {
+    await update(id, state: TransferState.cancelled, clearError: true);
+  }
+
+  /// Re-queue a failed/cancelled/paused job for another attempt.
+  Future<void> retry(String id) async {
+    final job = _jobs[id];
+    if (job == null) return;
+    await update(
+      id,
+      state: TransferState.pending,
+      transferredBytes: 0,
+      clearError: true,
+      retryCount: job.retryCount + 1,
     );
   }
 

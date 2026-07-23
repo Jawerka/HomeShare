@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:homeshare_core/homeshare_core.dart';
 import 'package:homeshare_p2p/homeshare_p2p.dart';
 import 'package:http/http.dart' as http;
 
@@ -46,7 +47,8 @@ class InstanceGate {
           )
           .timeout(const Duration(seconds: 3));
       return res.statusCode == 200;
-    } catch (_) {
+    } catch (e, st) {
+      HsLog.app.fine('InstanceGate handoff: no running agent', e, st);
       return false;
     }
   }

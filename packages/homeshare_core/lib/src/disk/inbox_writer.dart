@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../hash/sha256_stream.dart';
+import '../logging/hs_log.dart';
 import 'path_sanitize.dart';
 
 /// Writes incoming transfer bytes into a temp area, then atomically moves to inbox.
@@ -12,6 +13,9 @@ class InboxWriter {
   });
 
   final Directory inboxDir;
+
+  /// One active blob PUT per transfer+relative path.
+  final _activeBlobKeys = <String>{};
 
   Directory tmpRoot(String transferId) =>
       Directory(p.join(inboxDir.path, '.homeshare-tmp', transferId));
@@ -50,25 +54,48 @@ class InboxWriter {
     }
   }
 
+  String _blobKey(String transferId, String relativePath) =>
+      '$transferId::$relativePath';
+
   /// Open a streaming write at [offset] (one blob PUT).
+  ///
+  /// Throws [BlobWriteConflictException] if another PUT is active for the same
+  /// transfer path.
   Future<InboxWriteSession> openWrite({
     required String transferId,
     required String relativePath,
     required int offset,
   }) async {
-    final file = await openTempFile(transferId, relativePath: relativePath);
-    final raf = await file.open(mode: FileMode.writeOnlyAppend);
-    final length = await raf.length();
-    if (offset < length) {
-      await raf.truncate(offset);
-      await raf.setPosition(offset);
-    } else if (offset > length) {
-      await raf.close();
-      throw StateError('gap in upload: have $length, got offset $offset');
-    } else {
-      await raf.setPosition(offset);
+    final key = _blobKey(transferId, relativePath);
+    if (_activeBlobKeys.contains(key)) {
+      throw BlobWriteConflictException(transferId, relativePath);
     }
-    return InboxWriteSession._(raf, offset);
+    _activeBlobKeys.add(key);
+    try {
+      final file = await openTempFile(transferId, relativePath: relativePath);
+      final raf = await file.open(mode: FileMode.writeOnlyAppend);
+      final length = await raf.length();
+      if (offset < length) {
+        await raf.truncate(offset);
+        await raf.setPosition(offset);
+      } else if (offset > length) {
+        await raf.close();
+        throw StateError('gap in upload: have $length, got offset $offset');
+      } else {
+        await raf.setPosition(offset);
+      }
+      return InboxWriteSession._(
+        raf,
+        offset,
+        onRelease: () => _activeBlobKeys.remove(key),
+      );
+    } catch (e, st) {
+      _activeBlobKeys.remove(key);
+      if (e is! BlobWriteConflictException) {
+        HsLog.core.warning('openWrite failed for $key', e, st);
+      }
+      rethrow;
+    }
   }
 
   Future<String> hashTemp({
@@ -135,7 +162,9 @@ class InboxWriter {
     if (await tmp.exists()) {
       try {
         await tmp.delete(recursive: true);
-      } catch (_) {}
+      } catch (e, st) {
+        HsLog.core.warning('tmp cleanup failed for transfer $transferId', e, st);
+      }
     }
   }
 
@@ -163,6 +192,17 @@ class InboxWriter {
   }
 }
 
+class BlobWriteConflictException implements Exception {
+  BlobWriteConflictException(this.transferId, this.relativePath);
+
+  final String transferId;
+  final String relativePath;
+
+  @override
+  String toString() =>
+      'BlobWriteConflictException: $transferId/$relativePath already writing';
+}
+
 class Sha256MismatchException implements Exception {
   Sha256MismatchException({required this.expected, required this.actual});
   final String expected;
@@ -174,8 +214,9 @@ class Sha256MismatchException implements Exception {
 
 /// Streaming writer for a single blob PUT.
 class InboxWriteSession {
-  InboxWriteSession._(this._raf, this._offset);
+  InboxWriteSession._(this._raf, this._offset, {required this.onRelease});
   final RandomAccessFile _raf;
+  final void Function() onRelease;
   int _offset;
   var _closed = false;
 
@@ -188,6 +229,7 @@ class InboxWriteSession {
     if (!_closed) {
       await _raf.close();
       _closed = true;
+      onRelease();
     }
     return _offset;
   }
@@ -196,9 +238,11 @@ class InboxWriteSession {
     if (!_closed) {
       try {
         await _raf.close();
-      } catch (_) {}
+      } catch (e, st) {
+        HsLog.core.warning('InboxWriteSession abort close failed', e, st);
+      }
       _closed = true;
+      onRelease();
     }
   }
 }
-

@@ -71,9 +71,6 @@ Desktop.ini
 *.userosscache
 *.sln.docstates
 
-# --- Misc ---
-*.tmp
-*.bak
-*.orig
-.history/
-migrate_working_dir/
+# --- Local agent guidance (not committed) ---
+AGENTS.md
+

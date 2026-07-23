@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -7,13 +6,13 @@ import 'package:homeshare_core/homeshare_core.dart';
 import 'package:homeshare_p2p/homeshare_p2p.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_router/shelf_router.dart' as shelf_router;
 
-import 'transfer_notifications.dart';
-import 'device_profile.dart';
 import 'background_presence_channel.dart';
+import 'device_profile.dart';
+import 'local_agent_server.dart';
+import 'pending_send_queue.dart';
+import 'presence_runtime.dart';
+import 'transfer_notifications.dart';
 
 /// Owns identity, config, P2P server, outbox and local agent HTTP.
 class AppController extends ChangeNotifier {
@@ -29,14 +28,17 @@ class AppController extends ChangeNotifier {
   late Directory _dataDir;
   late File _configFile;
   UdpBeacon? beacon;
-  HttpServer? agentServer;
-  PresenceProbe? _presence;
-  Timer? _presenceTimer;
+  LocalAgentServer? _agent;
+  late final PendingSendQueue _pendingSend;
+  PresenceRuntime? _presenceRuntime;
   Timer? _uiNotifyDebounce;
-  Timer? _pendingSendDebounce;
+
+  AppController() {
+    _pendingSend = PendingSendQueue(onReady: notifyListeners);
+  }
 
   /// Paths handed off from a second process (Explorer multi-select).
-  List<String> pendingSendPaths = const [];
+  List<String> get pendingSendPaths => _pendingSend.paths;
 
   /// Callback so UI can show/focus the window (set from main).
   Future<void> Function()? onRequestShowWindow;
@@ -53,6 +55,9 @@ class AppController extends ChangeNotifier {
     if (active.isEmpty) return null;
     return active.first.progressPercent;
   }
+
+  int get activeTransferCount =>
+      outbox.list(includeTerminal: false).where((j) => !j.isTerminal).length;
 
   List<TrustedPeer> get peers => config.trustedPeers;
   List<TransferJob> get jobs => outbox.list();
@@ -200,11 +205,14 @@ class AppController extends ChangeNotifier {
         recentErrors.insert(0, 'discovery: $e');
       }
 
-      _presence = PresenceProbe();
-      _presenceTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-        unawaited(_probePresence());
-      });
-      unawaited(_probePresence());
+      _presenceRuntime = PresenceRuntime(
+        config: config,
+        onChanged: () {
+          notifyListeners();
+          unawaited(coordinator.tick());
+        },
+      );
+      // Coordinator created below; start presence after wiring.
     }
 
     transferClient = TransferClient(identity: identity, tokenStore: tokens);
@@ -219,6 +227,7 @@ class AppController extends ChangeNotifier {
     await TransferNotifications.instance.init();
 
     coordinator.start();
+    _presenceRuntime?.start();
     _progressSub = coordinator.progress.listen((job) {
       unawaited(_notifyJob(job));
     });
@@ -351,26 +360,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _probePresence() async {
-    final probe = _presence;
-    if (probe == null) return;
-    var changed = false;
-    for (final peer in List<TrustedPeer>.from(config.trustedPeers)) {
-      final host = peer.host;
-      if (host == null || host.isEmpty) continue;
-      final health = await probe.probe(host: host, port: peer.port);
-      final updated = probe.apply(peer: peer, health: health);
-      if (updated.online != peer.online ||
-          updated.displayName != peer.displayName ||
-          updated.lastSeen != peer.lastSeen) {
-        await config.upsertPeer(updated);
-        changed = true;
-      }
-    }
-    if (changed) {
-      notifyListeners();
-      // Pending sends to peers that just came online.
-      unawaited(coordinator.tick());
-    }
+    await _presenceRuntime?.probeOnce();
   }
 
   void _scheduleUiNotify() {
@@ -381,85 +371,41 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _startAgent() async {
-    final router = shelf_router.Router()
-      ..get('/v1/health', (_) => Response.ok('{"ok":true}'))
-      ..get('/v1/peers/online', (_) {
-        final online = config.trustedPeers
-            .where((p) => p.online && p.host != null)
-            .map(
-              (p) => {
-                'peer_id': p.peerId.value,
-                'display_name': p.label,
-                'host': p.host,
-                'port': p.port,
-              },
-            )
-            .toList();
-        return Response.ok(
-          jsonEncode({'peers': online}),
-          headers: {'content-type': 'application/json'},
-        );
-      })
-      ..post('/v1/send', (Request request) async {
-        final body =
-            jsonDecode(await request.readAsString()) as Map<String, dynamic>;
-        final peerId = body['peer_id'] as String;
-        final paths =
-            (body['paths'] as List).map((e) => e as String).toList();
+    _agent = LocalAgentServer(
+      config: config,
+      sendPaths: (paths, {required peerId}) async {
         await sendPaths(paths, peerId: peerId);
-        return Response.ok(jsonEncode({'ok': true}));
-      })
-      ..post('/v1/invoke', (Request request) async {
-        final body =
-            jsonDecode(await request.readAsString()) as Map<String, dynamic>;
-        final paths = (body['paths'] as List? ?? const [])
-            .map((e) => e as String)
-            .where((e) => e.isNotEmpty)
-            .toList();
-        final peerId = body['peer_id'] as String?;
-        final show = body['show'] as bool? ?? true;
-        if (show) {
-          unawaited(onRequestShowWindow?.call() ?? Future<void>.value());
-        }
-        if (paths.isEmpty) {
-          return Response.ok(jsonEncode({'ok': true, 'action': 'show'}));
-        }
-        if (peerId != null && peerId.isNotEmpty) {
-          await sendPaths(paths, peerId: peerId);
-          return Response.ok(jsonEncode({'ok': true, 'action': 'send'}));
-        }
-        // Merge paths from multiple Explorer invocations (multi-select).
-        queuePendingSendPaths(paths);
-        return Response.ok(jsonEncode({'ok': true, 'action': 'picker'}));
-      });
-
-    try {
-      agentServer = await shelf_io.serve(
-        router.call,
-        InternetAddress.loopbackIPv4,
-        config.agentPort,
-      );
-    } on SocketException catch (e) {
-      throw StateError(
-        'Agent port ${config.agentPort} busy (another HomeShare?). $e',
-      );
-    }
+      },
+      queuePendingSendPaths: queuePendingSendPaths,
+      onRequestShowWindow: () =>
+          onRequestShowWindow?.call() ?? Future<void>.value(),
+    );
+    await _agent!.start();
   }
 
   /// Collect paths from CLI / Explorer; debounce so multi-select handoffs merge.
   void queuePendingSendPaths(List<String> paths) {
-    if (paths.isEmpty) return;
-    pendingSendPaths = <String>{...pendingSendPaths, ...paths}.toList();
-    _pendingSendDebounce?.cancel();
-    _pendingSendDebounce = Timer(const Duration(milliseconds: 450), () {
-      notifyListeners();
-    });
+    _pendingSend.queue(paths);
   }
 
   void clearPendingSendPaths() {
-    _pendingSendDebounce?.cancel();
-    _pendingSendDebounce = null;
-    pendingSendPaths = const [];
+    _pendingSend.clear();
+    notifyListeners();
+  }
+
+  Future<void> cancelJob(String id) async {
+    await outbox.markCancelled(id);
+    notifyListeners();
+  }
+
+  Future<void> retryJob(String id) async {
+    await outbox.retry(id);
+    await coordinator.tick();
+    notifyListeners();
+  }
+
+  void clearRecentErrors() {
+    recentErrors.clear();
     notifyListeners();
   }
 
@@ -577,15 +523,14 @@ class AppController extends ChangeNotifier {
       pairing.offerJson(lanHost: peerServer.lanHost);
 
   Future<void> shutdown() async {
-    _presenceTimer?.cancel();
     _uiNotifyDebounce?.cancel();
-    _pendingSendDebounce?.cancel();
-    _presence?.close();
+    _pendingSend.dispose();
+    _presenceRuntime?.stop();
     await _progressSub?.cancel();
     coordinator.stop();
     await beacon?.stop();
     await peerServer.stop();
-    await agentServer?.close(force: true);
+    await _agent?.stop();
     transferClient.close();
     await outbox.close();
   }

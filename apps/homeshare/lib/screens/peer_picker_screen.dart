@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../services/app_controller.dart';
+import '../theme/home_share_theme.dart';
 import '../widgets/transfer_progress_body.dart';
 
 /// Shown when launching via Explorer / Share with files but no --target.
@@ -20,7 +21,8 @@ class PeerPickerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final peers = controller.peers;
-    final names = paths.map(p.basename).join(', ');
+    final names = paths.map(p.basename).take(3).join(', ');
+    final more = paths.length > 3 ? ' и ещё ${paths.length - 3}' : '';
     return Scaffold(
       appBar: AppBar(
         title: const Text('Кому отправить'),
@@ -35,56 +37,74 @@ class PeerPickerScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Файлы (${paths.length}): $names',
-              maxLines: 4,
+              paths.length == 1
+                  ? names
+                  : 'Файлов: ${paths.length} · $names$more',
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
             ),
           ),
           Expanded(
             child: peers.isEmpty
-                ? const Center(
-                    child: Text('Нет устройств. Сначала привяжите peer.'),
+                ? EmptyState(
+                    icon: Icons.devices_other,
+                    title: 'Сначала добавьте устройство',
+                    subtitle:
+                        'Откройте HomeShare → Устройства → Добавить по PIN',
+                    action: FilledButton(
+                      onPressed: () => onDone?.call(),
+                      child: const Text('Закрыть'),
+                    ),
                   )
                 : ListView.builder(
                     itemCount: peers.length,
                     itemBuilder: (context, i) {
                       final peer = peers[i];
+                      final canQueue = peer.host != null;
                       return ListTile(
-                        enabled: peer.host != null,
+                        enabled: canQueue,
                         leading: Icon(
                           Icons.send,
-                          color: peer.online ? Colors.green : Colors.grey,
+                          color: peer.online
+                              ? Colors.green
+                              : Theme.of(context).colorScheme.outline,
                         ),
-                        title: Text(peer.label, textAlign: TextAlign.center),
+                        title: Text(peer.label),
                         subtitle: Text(
-                          peer.online ? 'онлайн' : 'офлайн',
-                          textAlign: TextAlign.center,
+                          peer.online
+                              ? 'онлайн'
+                              : canQueue
+                                  ? 'офлайн · будет в очереди, когда появится в сети'
+                                  : 'офлайн',
                         ),
-                        onTap: () async {
-                          final jobs = await controller.sendPaths(
-                            paths,
-                            peerId: peer.peerId.value,
-                          );
-                          if (!context.mounted) return;
-                          if (jobs.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Не удалось поставить в очередь'),
-                              ),
-                            );
-                            return;
-                          }
-                          await showDialog<void>(
-                            context: context,
-                            barrierDismissible: false,
-                            builder: (ctx) => TransferProgressDialog(
-                              controller: controller,
-                              jobIds: jobs.map((j) => j.id).toList(),
-                            ),
-                          );
-                          onDone?.call();
-                        },
+                        onTap: !canQueue
+                            ? null
+                            : () async {
+                                final jobs = await controller.sendPaths(
+                                  paths,
+                                  peerId: peer.peerId.value,
+                                );
+                                if (!context.mounted) return;
+                                if (jobs.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Не удалось поставить в очередь',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                await showDialog<void>(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (ctx) => TransferProgressDialog(
+                                    controller: controller,
+                                    jobIds: jobs.map((j) => j.id).toList(),
+                                  ),
+                                );
+                                onDone?.call();
+                              },
                       );
                     },
                   ),
@@ -151,7 +171,7 @@ class _TransferProgressDialogState extends State<TransferProgressDialog> {
         width: 360,
         child: TransferProgressBody(jobs: jobs),
       ),
-      actionsAlignment: MainAxisAlignment.center,
+      actionsAlignment: MainAxisAlignment.end,
       actions: [
         if (allDone)
           TextButton(

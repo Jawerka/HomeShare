@@ -1,3 +1,5 @@
+import '../protocol/ports.dart';
+
 /// Stable peer identity used across discovery, trust and transfer.
 class PeerId {
   const PeerId(this.value);
@@ -21,7 +23,7 @@ class TrustedPeer {
     required this.displayName,
     this.alias,
     this.host,
-    this.port = 45838,
+    this.port = HomeSharePorts.p2p,
     this.signingPublicKey,
     this.tlsCertSha256,
     this.lastSeen,
@@ -89,7 +91,7 @@ class TrustedPeer {
       displayName: json['display_name']! as String,
       alias: json['alias'] as String?,
       host: json['host'] as String?,
-      port: (json['port'] as num?)?.toInt() ?? 45838,
+      port: (json['port'] as num?)?.toInt() ?? HomeSharePorts.p2p,
       signingPublicKey: json['signing_public_key'] as String?,
       tlsCertSha256: json['tls_cert_sha256'] as String?,
       lastSeen: json['last_seen'] != null

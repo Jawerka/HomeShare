@@ -109,7 +109,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             labelText: 'Имя устройства',
             border: OutlineInputBorder(),
           ),
-          onSubmitted: (v) => c.setDisplayName(v.trim()),
+          onEditingComplete: () => c.setDisplayName(_nameCtrl.text.trim()),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: () => c.setDisplayName(_nameCtrl.text.trim()),
+            child: const Text('Сохранить имя'),
+          ),
         ),
         const SizedBox(height: 12),
         ListTile(

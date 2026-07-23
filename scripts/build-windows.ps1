@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 $env:Path = "$env:LOCALAPPDATA\flutter\bin;$env:Path"
 $Root = Split-Path $PSScriptRoot -Parent
+$Version = if ($env:HOMESHARE_VERSION) { $env:HOMESHARE_VERSION } else { "0.1.1" }
 Push-Location "$Root\apps\homeshare"
 try {
   flutter build windows --release
@@ -29,6 +30,7 @@ if (Test-Path $Iss) {
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
   ) | Where-Object { Test-Path $_ } | Select-Object -First 1
   if ($iscc) {
+    (Get-Content $Iss) -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$Version`"" | Set-Content $Iss
     & $iscc $Iss
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   } else {
@@ -36,5 +38,5 @@ if (Test-Path $Iss) {
   }
 }
 
-Compress-Archive -Path "$Root\dist\windows\*" -DestinationPath "$Root\dist\homeshare-0.1.0-windows-x64.zip" -Force
-Write-Host "Windows build ready in dist/"
+Compress-Archive -Path "$Root\dist\windows\*" -DestinationPath "$Root\dist\homeshare-$Version-windows-x64.zip" -Force
+Write-Host "Windows build ready in dist/ (version $Version)"

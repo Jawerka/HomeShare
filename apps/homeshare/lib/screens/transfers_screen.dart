@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:homeshare_core/homeshare_core.dart';
 
 import '../services/app_controller.dart';
+import '../theme/home_share_theme.dart';
 import '../widgets/transfer_progress_body.dart';
 
 class TransfersScreen extends StatelessWidget {
@@ -13,34 +16,38 @@ class TransfersScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final jobs = controller.jobs;
     if (jobs.isEmpty) {
-      return const Center(child: Text('Передач пока нет'));
+      return const EmptyState(
+        icon: Icons.swap_vert,
+        title: 'Передач пока нет',
+        subtitle: 'Отправьте файл через Share или контекстное меню Explorer',
+      );
     }
 
     final active = jobs.where((j) => !j.isTerminal).toList();
-    final recent = jobs.take(12).toList();
+    final recent = jobs.take(20).toList();
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         if (active.isNotEmpty) ...[
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: TransferProgressBody(jobs: active),
-            ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TransferProgressBody(jobs: active),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           Text('История', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
         ],
         ...recent.map((job) {
           final terminal = job.isTerminal;
+          final failed = job.state == TransferState.failed;
+          final cancelled = job.state == TransferState.cancelled;
           return ListTile(
             leading: Icon(
               terminal
                   ? (job.state == TransferState.completed
                       ? Icons.check_circle
-                      : Icons.error)
+                      : Icons.error_outline)
                   : (job.direction == TransferDirection.receive
                       ? Icons.download
                       : Icons.upload),
@@ -50,13 +57,26 @@ class TransfersScreen extends StatelessWidget {
                       : Colors.red)
                   : null,
             ),
-            title: Text(job.name, textAlign: TextAlign.center),
+            title: Text(job.name),
             subtitle: Text(
               '${job.direction == TransferDirection.receive ? 'приём' : 'отправка'}'
-              ' · ${job.state.name}'
+              ' · ${transferStateLabel(job.state)}'
               '${terminal ? '' : ' · ${job.progressPercent}%'}',
-              textAlign: TextAlign.center,
             ),
+            trailing: terminal && (failed || cancelled)
+                ? IconButton(
+                    tooltip: 'Повторить',
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () => unawaited(controller.retryJob(job.id)),
+                  )
+                : !terminal
+                    ? IconButton(
+                        tooltip: 'Отменить',
+                        icon: const Icon(Icons.close),
+                        onPressed: () =>
+                            unawaited(controller.cancelJob(job.id)),
+                      )
+                    : null,
           );
         }),
       ],

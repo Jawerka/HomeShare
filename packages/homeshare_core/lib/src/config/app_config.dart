@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/peer.dart';
+import '../protocol/ports.dart';
+import '../protocol/transfer_limits.dart';
 
 /// Application configuration shared by clients and Linux hub.
 class AppConfig {
@@ -9,13 +11,15 @@ class AppConfig {
     required this.displayName,
     required this.inboxDir,
     required this.dataDir,
-    this.webPort = 8787,
-    this.p2pPort = 45838,
-    this.discoveryPort = 45837,
-    this.agentPort = 47831,
+    this.webPort = HomeSharePorts.web,
+    this.p2pPort = HomeSharePorts.p2p,
+    this.discoveryPort = HomeSharePorts.discovery,
+    this.agentPort = HomeSharePorts.agent,
     this.preferredLanHost,
     this.backgroundPresenceEnabled = true,
     this.backgroundPresenceMinutes = 3,
+    this.maxTransferBytes = HomeShareTransferLimits.maxTransferBytes,
+    this.maxManifestEntries = HomeShareTransferLimits.maxManifestEntries,
     List<TrustedPeer>? trustedPeers,
   }) : trustedPeers = trustedPeers ?? [];
 
@@ -36,12 +40,19 @@ class AppConfig {
 
   /// How often to re-announce on the LAN while background presence is on.
   int backgroundPresenceMinutes;
+
+  /// Reject transfer offers above this size (bytes).
+  int maxTransferBytes;
+
+  /// Reject directory offers with more manifest entries than this.
+  int maxManifestEntries;
+
   List<TrustedPeer> trustedPeers;
 
-  static const defaultP2pPort = 45838;
-  static const defaultDiscoveryPort = 45837;
-  static const defaultWebPort = 8787;
-  static const defaultAgentPort = 47831;
+  static const defaultP2pPort = HomeSharePorts.p2p;
+  static const defaultDiscoveryPort = HomeSharePorts.discovery;
+  static const defaultWebPort = HomeSharePorts.web;
+  static const defaultAgentPort = HomeSharePorts.agent;
 
   File get _peersFile =>
       File('$dataDir${Platform.pathSeparator}trusted_peers.json');
@@ -58,6 +69,8 @@ class AppConfig {
           'preferred_lan_host': preferredLanHost!.trim(),
         'background_presence_enabled': backgroundPresenceEnabled,
         'background_presence_minutes': backgroundPresenceMinutes,
+        'max_transfer_bytes': maxTransferBytes,
+        'max_manifest_entries': maxManifestEntries,
       };
 
   factory AppConfig.fromJson(Map<String, Object?> json) {
@@ -79,6 +92,12 @@ class AppConfig {
           json['background_presence_enabled'] as bool? ?? true,
       backgroundPresenceMinutes:
           (json['background_presence_minutes'] as num?)?.toInt() ?? 3,
+      maxTransferBytes:
+          (json['max_transfer_bytes'] as num?)?.toInt() ??
+              HomeShareTransferLimits.maxTransferBytes,
+      maxManifestEntries:
+          (json['max_manifest_entries'] as num?)?.toInt() ??
+              HomeShareTransferLimits.maxManifestEntries,
     );
   }
 

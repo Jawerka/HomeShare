@@ -51,3 +51,17 @@ docs/                     # ARCHITECTURE, TRANSFER_WIRE, …
 | 47831/tcp | Windows local agent (shell) |
 
 Firewall: `.\scripts\allow-homeshare-firewall.ps1` (от администратора).
+
+## Releases
+
+Сборки публикуются в [GitHub Releases](https://github.com/Jawerka/HomeShare/releases) по тегу `v*` (например `v0.1.0`):
+
+| Артефакт | Платформа |
+|----------|-----------|
+| `homeshare-hub-linux-x64-*.tar.gz` | Linux hub |
+| `homeshare-*-windows-x64.zip` / `*-setup.exe` | Windows |
+| `homeshare-*.apk` | Android (подпись через repository secrets) |
+
+CI на каждый PR: analyze + unit/e2e тесты + сборка shell DLL. Workflows: `.github/workflows/ci.yml`, `.github/workflows/build-release.yml`.
+
+Совместимость: Windows 10/11, Android 10+, Ubuntu 22.04+. Статус разработки: [PLAN.md](PLAN.md).

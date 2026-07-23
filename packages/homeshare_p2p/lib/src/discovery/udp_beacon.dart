@@ -121,7 +121,9 @@ class UdpBeacon {
       );
       _peers[peerId] = peer;
       _controller.add(currentPeers);
-    } catch (_) {}
+    } catch (e, st) {
+      HsLog.p2p.fine('Ignoring invalid beacon datagram', e, st);
+    }
   }
 
   /// Prefer peer-advertised private LAN IP over the UDP source address.

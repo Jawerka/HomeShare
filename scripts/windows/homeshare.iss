@@ -1,6 +1,6 @@
 ; Inno Setup 6 script for HomeShare
 #define MyAppName "HomeShare"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppPublisher "HomeShare"
 #define MyAppExeName "homeshare.exe"
 

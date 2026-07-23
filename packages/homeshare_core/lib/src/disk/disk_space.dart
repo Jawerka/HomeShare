@@ -1,19 +1,34 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import '../logging/hs_log.dart';
+
 /// Report of free / total disk space for an inbox path.
 class DiskSpaceReport {
   const DiskSpaceReport({
     required this.path,
     required this.freeBytes,
     required this.totalBytes,
+    this.probeOk = true,
   });
 
   final String path;
   final int freeBytes;
   final int totalBytes;
 
+  /// False when the OS probe failed — callers must fail-closed (reject offers).
+  final bool probeOk;
+
+  /// Probe failed; do not assume free space.
+  factory DiskSpaceReport.unknown(String path) => DiskSpaceReport(
+        path: path,
+        freeBytes: 0,
+        totalBytes: 0,
+        probeOk: false,
+      );
+
   bool hasRoomFor(int requiredBytes, {int safetyMarginBytes = 64 * 1024 * 1024}) {
+    if (!probeOk) return false;
     final margin = math.max(
       safetyMarginBytes,
       (requiredBytes * 0.01).ceil(),
@@ -56,15 +71,10 @@ class DiskSpace {
           }
         }
       }
-    } catch (_) {
-      // fall through
+    } catch (e, st) {
+      HsLog.core.warning('df probe failed for $path', e, st);
     }
-    // Best-effort fallback: assume plenty of space in tests / constrained envs.
-    return DiskSpaceReport(
-      path: path,
-      freeBytes: 1 << 50,
-      totalBytes: 1 << 50,
-    );
+    return DiskSpaceReport.unknown(path);
   }
 
   static Future<DiskSpaceReport> _windows(String path) async {
@@ -89,13 +99,9 @@ class DiskSpace {
           );
         }
       }
-    } catch (_) {
-      // fall through
+    } catch (e, st) {
+      HsLog.core.warning('PowerShell disk probe failed for $path', e, st);
     }
-    return DiskSpaceReport(
-      path: path,
-      freeBytes: 1 << 50,
-      totalBytes: 1 << 50,
-    );
+    return DiskSpaceReport.unknown(path);
   }
 }

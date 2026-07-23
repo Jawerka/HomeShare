@@ -13,6 +13,8 @@ import 'package:homeshare_server/src/qr_svg.dart';
 import 'package:homeshare_server/src/web_ui.dart';
 
 Future<void> main(List<String> args) async {
+  HsLog.setup();
+
   if (args.contains('-h') || args.contains('--help')) {
     stdout.writeln(
       'HomeShare hub\n\n'
@@ -253,20 +255,21 @@ class HubApp {
       'http_port': config.p2pPort,
       'web_port': config.webPort,
       'inbox_path': config.inboxDir,
-      'inbox_free_bytes': space.freeBytes,
+      'inbox_free_bytes': space.probeOk ? space.freeBytes : null,
+      'inbox_space_probe_ok': space.probeOk,
       'trusted_count': config.trustedPeers.length,
       'active_transfers': active,
       'display_name': identity.displayName,
       'version': homeShareVersion,
       'sync_badge_kind': active > 0 ? 'syncing' : 'ok',
       'sync_badge_text':
-          active > 0 ? 'Receiving files ($active)' : 'Hub ready',
+          active > 0 ? 'Идёт передача ($active)' : 'Hub готов',
       'trusted_devices': config.trustedPeers
           .map(
             (d) => {
               'peer_id': d.peerId.value,
               'name': d.displayName,
-              'last_sync_ok': d.online ? true : null,
+              'online': d.online,
               'host': d.host,
             },
           )

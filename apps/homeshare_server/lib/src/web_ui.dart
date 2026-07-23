@@ -156,7 +156,9 @@ String webUiHtml({required String version}) {
       }
       if (actions) actions.style.display = '';
       el.innerHTML = list.map(d =>
-        '<li><span>' + escapeHtml(d.name) + '</span><span class="dev-actions">' +
+        '<li><span>' + escapeHtml(d.name) +
+        (d.online ? ' <span class="dev-ok">онлайн</span>' : ' <span class="dev-idle">офлайн</span>') +
+        '</span><span class="dev-actions">' +
         '<span class="dev-idle">' + escapeHtml(d.host || '-') + '</span>' +
         '<button type="button" class="dev-revoke" onclick="revokeDevice(' +
         JSON.stringify(d.peer_id) + ',' + JSON.stringify(d.name) + ')">Отвязать</button>' +

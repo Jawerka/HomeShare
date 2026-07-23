@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  analyze_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: dart-lang/setup-dart@v1
+      - name: Activate melos
+        run: dart pub global activate melos
+      - name: Bootstrap
+        run: melos bootstrap
+      - name: Analyze
+        run: melos run analyze
+      - name: Test Dart packages
+        run: |
+          cd packages/homeshare_core && dart test
+          cd ../homeshare_p2p && dart test
+      - name: Flutter tests
+        run: |
+          cd apps/homeshare
+          flutter pub get
+          flutter test
+
+  windows_shell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build shell extension DLL
+        shell: pwsh
+        run: .\scripts\build-shell-dll.ps1

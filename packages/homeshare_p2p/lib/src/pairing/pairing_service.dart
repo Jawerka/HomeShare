@@ -155,7 +155,7 @@ class PairingService {
           jsonDecode(offerRes.body) as Map<String, dynamic>;
       if (offer['pin'] != pin) {
         // Host returns current pin in offer for UX; guest must match.
-        // Actually MeshPad verifies pin on confirm — guest sends pin.
+        // Guest sends PIN; host validates before exchanging tokens.
       }
       final confirmUri = Uri.parse(
         'http://$host:$port${HomeShareProtocol.pathPrefix}/pairing/confirm',
@@ -200,7 +200,7 @@ class PairingService {
   }
 }
 
-/// Simple QR PNG generator (minimal QR for hub) — placeholder matrix via seed.
+/// Simple QR SVG helper for hub pairing payload.
 /// Real PNG is produced in the server layer; this builds the pairing URI.
 String pairingUriFor({
   required String host,
