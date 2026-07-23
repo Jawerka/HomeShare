@@ -4,11 +4,27 @@ $ShellDir = Join-Path $Root "native\windows_shell"
 $OutDll = Join-Path $ShellDir "HomeShareShell.dll"
 $DistDll = Join-Path $Root "dist\windows\HomeShareShell.dll"
 
-$vcvars = @(
-  "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
-  "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
-  "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$vcvars = $null
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+  $installPath = & $vswhere -latest -products * `
+    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+    -property installationPath
+  if ($installPath) {
+    $candidate = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $candidate) { $vcvars = $candidate }
+  }
+}
+
+if (-not $vcvars) {
+  $vcvars = @(
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 
 if (-not $vcvars) {
   throw "vcvars64.bat not found. Install VS Build Tools with C++ workload."
